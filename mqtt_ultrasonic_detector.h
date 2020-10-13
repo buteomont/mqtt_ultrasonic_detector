@@ -14,7 +14,7 @@
 #define USERNAME_SIZE 50
 #define MQTT_TOPIC_SIZE 150
 #define MQTT_TOPIC_DISTANCE "distance"
-#define MQTT_TOPIC_STATE "state"
+#define MQTT_TOPIC_STATE "present"
 #define MQTT_TOPIC_PERIOD "period"
 #define MQTT_TOPIC_COMMAND_REQUEST "command"
 #define MQTT_PAYLOAD_SETTINGS_COMMAND "settings" //show all user accessable settings
@@ -23,7 +23,7 @@
 #define MQTT_PAYLOAD_VERSION_COMMAND "version" //show the version number
 #define MQTT_PAYLOAD_STATUS_COMMAND "status" //show the most recent flow values
 #define JSON_STATUS_SIZE SSID_SIZE+PASSWORD_SIZE+USERNAME_SIZE+MQTT_TOPIC_SIZE+50 //+50 for associated field names, etc
-
+#define PUBLISH_DELAY 300 //milliseconds to wait after publishing to MQTT to allow transaction to finish
 
 // Error codes copied from the MQTT library
 #define MQTT_CONNECTION_REFUSED            -2

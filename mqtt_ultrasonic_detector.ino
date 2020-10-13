@@ -13,7 +13,9 @@
  *  pass=<mqtt password>
  *  ssid=<wifi ssid>
  *  wifipass=<wifi password>
- *  
+ *  mindistance=<minimum presence distance>
+ *  maxdistance=<maximum presence distance>
+ *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
 #define VERSION "20.10.13.1"  //remember to update this after every change! YY.MM.DD.REV
  
@@ -39,6 +41,7 @@ typedef struct
   char mqttTopicRoot[MQTT_TOPIC_SIZE]="";
   int minimumPresenceDistance=0;  // Item is present if distance is greater than this
   int maximumPresenceDistance=400;// and distance is less than this
+  int sleepTime=10; //seconds to sleep between distance checks
   } conf;
 
 conf settings; //all settings in one struct makes it easier to store in EEPROM
@@ -49,6 +52,10 @@ bool commandComplete = false;  // goes true when enter is pressed
 
 int distance=0; //the last measurement
 boolean itemPresent=false; //TRUE if some object is within range window
+unsigned long doneTimestamp=0; //used to allow publishes to complete before sleeping
+
+String clientId = "ESP8266Client-"+ String(random(0xffff), HEX);
+  
 
 void setup() 
   {
@@ -101,23 +108,42 @@ void setup()
 
     // ********************* Initialize the MQTT connection
     mqttClient.setServer(settings.mqttBrokerAddress, settings.mqttBrokerPort);
-    
-//    delay(2000);  //give wifi a chance to warm up
-    reconnect();  // connect to the MQTT broker   
+    reconnect();  // connect to the MQTT broker
+     
+  // let's do this 
+    distance=measure();
+    itemPresent=distance>settings.minimumPresenceDistance 
+                && distance<settings.maximumPresenceDistance;
+    report();
+    doneTimestamp=millis(); //this is to allow the publish to complete before sleeping
     }
-  
-  
+  else
+    {
+    showSettings();
+    }
+
   }
 
  
 void loop()
   {
-  distance=measure();
-  itemPresent=distance>settings.minimumPresenceDistance 
-              && distance<settings.maximumPresenceDistance;
-  Serial.print("Nearest object in centimeters: ");
-  Serial.println(distance);
-  delay(5000);    
+  checkForCommand(); // Check for input in case something needs to be changed to work
+  if (settingsAreValid && settings.sleepTime==0) //if sleepTime is zero then don't sleep
+    {
+    reconnect();  // may need to reconnect to the MQTT broker
+    distance=measure();
+    itemPresent=distance>settings.minimumPresenceDistance 
+                && distance<settings.maximumPresenceDistance;
+    report();
+    
+    } 
+  else if (settingsAreValid && millis()-doneTimestamp>PUBLISH_DELAY)
+    {
+    Serial.print("Sleeping for ");
+    Serial.print(settings.sleepTime);
+    Serial.println(" seconds");
+    ESP.deepSleep(settings.sleepTime*1000000);
+    } 
   }
 
 // Read the distance 10 times and return the dominant value
@@ -215,7 +241,9 @@ void showSettings()
   Serial.print("maxdistance=<maximum presence distance> (");
   Serial.print(settings.maximumPresenceDistance);
   Serial.println(")");
-  Serial.println("\"reboot=yes\" to reboot the controller");
+  Serial.print("sleeptime=<seconds to sleep between measurements> (");
+  Serial.print(settings.sleepTime);
+  Serial.println(")");
   Serial.println("\n*** Use \"factorydefaults=yes\" to reset all settings ***\n");
   }
 
@@ -224,10 +252,6 @@ void showSettings()
  */
 void reconnect() 
   {
-  // Create a random client ID
-  String clientId = "ESP8266Client-";
-  clientId += String(random(0xffff), HEX);
-  
   // Loop until we're reconnected
   while (!mqttClient.connected()) 
     {
@@ -248,7 +272,7 @@ void reconnect()
       {
       Serial.print("failed, rc=");
       Serial.println(mqttClient.state());
-      Serial.println("Will try again in 5 seconds");
+      Serial.println("Will try again in a second");
       
       // Wait a second before retrying
       // In the meantime check for input in case something needs to be changed to make it work
@@ -259,6 +283,7 @@ void reconnect()
     }
   }
 
+  
 /*
  * Check for configuration input via the serial port.  Return a null string 
  * if no input is available or return the complete line otherwise.
@@ -299,50 +324,36 @@ void processCommand(String cmd)
     {
     strcpy(settings.mqttBrokerAddress,val);
     saveSettings();
-    if (settingsAreValid)
-      ESP.restart();
     }
   else if (strcmp(nme,"port")==0)
     {
     settings.mqttBrokerPort=atoi(val);
     saveSettings();
-    if (settingsAreValid)
-      ESP.restart();
     }
   else if (strcmp(nme,"topicRoot")==0)
     {
     strcpy(settings.mqttTopicRoot,val);
     saveSettings();
-    if (settingsAreValid)
-      ESP.restart();
     }
   else if (strcmp(nme,"user")==0)
     {
     strcpy(settings.mqttUsername,val);
     saveSettings();
-    if (settingsAreValid)
-      ESP.restart();
     }
   else if (strcmp(nme,"pass")==0)
     {
     strcpy(settings.mqttPassword,val);
     saveSettings();
-    if (settingsAreValid)
-      ESP.restart();
     }
   else if (strcmp(nme,"ssid")==0)
     {
     strcpy(settings.ssid,val);
     saveSettings();
-    if (settingsAreValid)
-      ESP.restart();
     }
   else if (strcmp(nme,"wifipass")==0)
     {
     strcpy(settings.wifiPassword,val);
     saveSettings();
-    if (settingsAreValid)
-      ESP.restart();
     }
   else if (strcmp(nme,"mindistance")==0)
     {
@@ -354,7 +365,12 @@ void processCommand(String cmd)
     settings.maximumPresenceDistance=atoi(val);
     saveSettings();
     }
-  else if ((strcmp(nme,"factorydefaults")==0) && (strcmp(val,"yes")==0)) //reset all eeprom settings
+  else if (strcmp(nme,"sleeptime")==0)
+    {
+    settings.sleepTime=atoi(val);
+    saveSettings();
+    }
+ else if ((strcmp(nme,"factorydefaults")==0) && (strcmp(val,"yes")==0)) //reset all eeprom settings
     {
     Serial.println("\n*********************** Resetting EEPROM Values ************************");
     initializeSettings();
@@ -379,6 +395,7 @@ void initializeSettings()
   strcpy(settings.mqttTopicRoot,"");
   settings.minimumPresenceDistance=0;
   settings.maximumPresenceDistance=400;
+  settings.sleepTime=10;
   }
 
 void checkForCommand()
@@ -419,7 +436,6 @@ void report()
   success=publish(topic,reading);
   if (!success)
     Serial.println("************ Failed publishing sensor state!");
-
   }
 
 boolean publish(char* topic, char* reading)
