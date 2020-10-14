@@ -17,7 +17,7 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.10.13.1"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.10.14.1"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>
@@ -42,6 +42,7 @@ typedef struct
   int minimumPresenceDistance=0;  // Item is present if distance is greater than this
   int maximumPresenceDistance=400;// and distance is less than this
   int sleepTime=10; //seconds to sleep between distance checks
+  char mqttClientId[MQTT_CLIENTID_SIZE]=""; //will be the same across reboots
   } conf;
 
 conf settings; //all settings in one struct makes it easier to store in EEPROM
@@ -54,7 +55,7 @@ int distance=0; //the last measurement
 boolean itemPresent=false; //TRUE if some object is within range window
 unsigned long doneTimestamp=0; //used to allow publishes to complete before sleeping
 
-String clientId = "ESP8266Client-"+ String(random(0xffff), HEX);
+char* clientId = settings.mqttClientId;
   
 
 void setup() 
@@ -121,7 +122,6 @@ void setup()
     {
     showSettings();
     }
-
   }
 
  
@@ -134,10 +134,10 @@ void loop()
     distance=measure();
     itemPresent=distance>settings.minimumPresenceDistance 
                 && distance<settings.maximumPresenceDistance;
-    report();
-    
+    report();    
     } 
-  else if (settingsAreValid && millis()-doneTimestamp>PUBLISH_DELAY)
+  else if (settingsAreValid                        //setup has been done and
+          && millis()-doneTimestamp>PUBLISH_DELAY) //waited long enough for report to finish
     {
     Serial.print("Sleeping for ");
     Serial.print(settings.sleepTime);
@@ -244,6 +244,8 @@ void showSettings()
   Serial.print("sleeptime=<seconds to sleep between measurements> (");
   Serial.print(settings.sleepTime);
   Serial.println(")");
+  Serial.print("MQTT Client ID is ");
+  Serial.println(settings.mqttClientId);
   Serial.println("\n*** Use \"factorydefaults=yes\" to reset all settings ***\n");
   }
 
@@ -258,7 +260,7 @@ void reconnect()
     Serial.print("Attempting MQTT connection...");
     
     // Attempt to connect
-    if (mqttClient.connect(clientId.c_str(),settings.mqttUsername,settings.mqttPassword))
+    if (mqttClient.connect(clientId,settings.mqttUsername,settings.mqttPassword))
       {
       Serial.println("connected to MQTT broker.");
 
@@ -396,6 +398,7 @@ void initializeSettings()
   settings.minimumPresenceDistance=0;
   settings.maximumPresenceDistance=400;
   settings.sleepTime=10;
+  strcpy(settings.mqttClientId,strcat("UltrasonicDetector",String(random(0xffff), HEX).c_str()));
   }
 
 void checkForCommand()
@@ -477,7 +480,8 @@ boolean saveSettings()
     settings.mqttBrokerPort!=0 &&
 //    strlen(settings.mqttUsername)>0 &&
 //    strlen(settings.mqttPassword)>0 &&
-    strlen(settings.mqttTopicRoot)>0)
+    strlen(settings.mqttTopicRoot)>0 &&
+    strlen(settings.mqttClientId)>0)
     {
     Serial.println("Settings deemed complete");
     settings.validConfig=VALID_SETTINGS_FLAG;
