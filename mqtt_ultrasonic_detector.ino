@@ -17,7 +17,7 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.10.14.1"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.10.14.2"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>
@@ -478,8 +478,6 @@ boolean saveSettings()
     strlen(settings.wifiPassword)>0 &&
     strlen(settings.mqttBrokerAddress)>0 &&
     settings.mqttBrokerPort!=0 &&
-//    strlen(settings.mqttUsername)>0 &&
-//    strlen(settings.mqttPassword)>0 &&
     strlen(settings.mqttTopicRoot)>0 &&
     strlen(settings.mqttClientId)>0)
     {
@@ -493,6 +491,14 @@ boolean saveSettings()
     settings.validConfig=0;
     settingsAreValid=false;
     }
+    
+  //The mqttClientId is not set by the user, but we need to make sure it's set  
+  if (strlen(settings.mqttClientId)==0)
+    {
+    strcpy(settings.mqttClientId,strcat("UltrasonicDetector",String(random(0xffff), HEX).c_str()));
+    Serial.println("Remember to remove the temporary code in the loadSettings() function");
+    }
+    
     
   EEPROM.put(0,settings);
   return EEPROM.commit();
