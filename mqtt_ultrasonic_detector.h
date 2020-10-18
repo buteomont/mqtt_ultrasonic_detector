@@ -17,6 +17,7 @@
 #define MQTT_TOPIC_DISTANCE "distance"
 #define MQTT_TOPIC_STATE "present"
 #define MQTT_TOPIC_PERIOD "period"
+#define MQTT_CLIENT_ID_ROOT "UltrasonicDetector"
 #define MQTT_TOPIC_COMMAND_REQUEST "command"
 #define MQTT_PAYLOAD_SETTINGS_COMMAND "settings" //show all user accessable settings
 #define MQTT_PAYLOAD_RESET_PULSE_COMMAND "resetPulseCounter" //reset the pulse counter to zero

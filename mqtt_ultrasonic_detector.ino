@@ -7,7 +7,7 @@
  * Configuration is done via serial connection.  Enter:
  *  broker=<broker name or address>
  *  port=<port number>   (defaults to 1883)
- *  topicRoot=<topic root> (something like buteomont/water/pressure/ - must end with / and 
+ *  topicroot=<topic root> (something like buteomont/water/pressure/ - must end with / and 
  *  "state" or "period" will be added)
  *  user=<mqtt user>
  *  pass=<mqtt password>
@@ -17,12 +17,15 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.10.14.2"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.10.16.1"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>
 #include <EEPROM.h>
 #include "mqtt_ultrasonic_detector.h"
+
+//PubSubClient callback function header.  This must appear before the PubSubClient constructor.
+void incomingMqttHandler(char* reqTopic, byte* payload, unsigned int length);
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
@@ -109,6 +112,7 @@ void setup()
 
     // ********************* Initialize the MQTT connection
     mqttClient.setServer(settings.mqttBrokerAddress, settings.mqttBrokerPort);
+    mqttClient.setCallback(incomingMqttHandler);
     reconnect();  // connect to the MQTT broker
      
   // let's do this 
@@ -124,6 +128,92 @@ void setup()
     }
   }
 
+
+/**
+ * Handler for incoming MQTT messages.  The payload is the command to perform. 
+ * The MQTT message topic sent is the topic root plus the command.
+ * Implemented commands are: 
+ * MQTT_PAYLOAD_SETTINGS_COMMAND: sends a JSON payload of all user-specified settings
+ * MQTT_PAYLOAD_REBOOT_COMMAND: Reboot the controller
+ * MQTT_PAYLOAD_VERSION_COMMAND Show the version number
+ * MQTT_PAYLOAD_STATUS_COMMAND Show the most recent flow values
+ */
+void incomingMqttHandler(char* reqTopic, byte* payload, unsigned int length) 
+  {
+  Serial.println("Callback works.");
+  payload[length]='\0'; //this should have been done in the caller code, shouldn't have to do it here
+  boolean rebootScheduled=false; //so we can reboot after sending the reboot response
+  char charbuf[100];
+  sprintf(charbuf,"%s",payload);
+  char* response;
+  
+  
+  //if the command is MQTT_PAYLOAD_SETTINGS_COMMAND, send all of the settings
+  if (strcmp(charbuf,MQTT_PAYLOAD_SETTINGS_COMMAND)==0)
+    {
+    char tempbuf[15]; //for converting numbers to strings
+    char jsonStatus[JSON_STATUS_SIZE];
+    
+    strcpy(jsonStatus,"{");
+    strcat(jsonStatus,"\"broker\":\"");
+    strcat(jsonStatus,settings.mqttBrokerAddress);
+    strcat(jsonStatus,"\", \"port\":");
+    sprintf(tempbuf,"%d",settings.mqttBrokerPort);
+    strcat(jsonStatus,tempbuf);
+    strcat(jsonStatus,", \"topicroot\":\"");
+    strcat(jsonStatus,settings.mqttTopicRoot);
+    strcat(jsonStatus,"\", \"user\":\"");
+    strcat(jsonStatus,settings.mqttUsername);
+    strcat(jsonStatus,"\", \"pass\":\"");
+    strcat(jsonStatus,settings.mqttPassword);
+    strcat(jsonStatus,"\", \"ssid\":\"");
+    strcat(jsonStatus,settings.ssid);
+    strcat(jsonStatus,"\", \"wifipass\":\"");
+    strcat(jsonStatus,settings.wifiPassword);
+    strcat(jsonStatus,"\"}");
+    response=jsonStatus;
+    }
+  else if (strcmp(charbuf,MQTT_PAYLOAD_VERSION_COMMAND)==0) //show the version number
+    {
+    char tmp[15];
+    strcpy(tmp,VERSION);
+    response=tmp;
+    }
+  else if (strcmp(charbuf,MQTT_PAYLOAD_STATUS_COMMAND)==0) //show the latest value
+    {
+    report();
+    
+    char tmp[25];
+    strcpy(tmp,"Status report complete");
+    response=tmp;
+    }
+  else if (strcmp(charbuf,MQTT_PAYLOAD_REBOOT_COMMAND)==0) //reboot the controller
+    {
+    char tmp[10];
+    strcpy(tmp,"REBOOTING");
+    response=tmp;
+    rebootScheduled=true;
+    }
+  else
+    {
+    char badCmd[18];
+    strcpy(badCmd,"(empty)");
+    response=badCmd;
+    }
+    
+  char topic[MQTT_TOPIC_SIZE];
+  strcpy(topic,settings.mqttTopicRoot);
+  strcat(topic,charbuf); //the incoming command becomes the topic suffix
+
+  if (!publish(topic,response))
+    Serial.println("************ Failure when publishing status response!");
+  
+  if (rebootScheduled)
+    {
+    delay(2000); //give publish time to complete
+    ESP.restart();
+    }
+  }
  
 void loop()
   {
@@ -220,7 +310,7 @@ void showSettings()
   Serial.print("port=<port number>   (");
   Serial.print(settings.mqttBrokerPort);
   Serial.println(")");
-  Serial.print("topicRoot=<topic root> (");
+  Serial.print("topicroot=<topic root> (");
   Serial.print(settings.mqttTopicRoot);
   Serial.println(")  Note: must end with \"/\"");  
   Serial.print("user=<mqtt user> (");
@@ -332,7 +422,7 @@ void processCommand(String cmd)
     settings.mqttBrokerPort=atoi(val);
     saveSettings();
     }
-  else if (strcmp(nme,"topicRoot")==0)
+  else if (strcmp(nme,"topicroot")==0)
     {
     strcpy(settings.mqttTopicRoot,val);
     saveSettings();
@@ -398,7 +488,7 @@ void initializeSettings()
   settings.minimumPresenceDistance=0;
   settings.maximumPresenceDistance=400;
   settings.sleepTime=10;
-  strcpy(settings.mqttClientId,strcat("UltrasonicDetector",String(random(0xffff), HEX).c_str()));
+  strcpy(settings.mqttClientId,strcat(MQTT_CLIENT_ID_ROOT,String(random(0xffff), HEX).c_str()));
   }
 
 void checkForCommand()
@@ -495,8 +585,7 @@ boolean saveSettings()
   //The mqttClientId is not set by the user, but we need to make sure it's set  
   if (strlen(settings.mqttClientId)==0)
     {
-    strcpy(settings.mqttClientId,strcat("UltrasonicDetector",String(random(0xffff), HEX).c_str()));
-    Serial.println("Remember to remove the temporary code in the loadSettings() function");
+    strcpy(settings.mqttClientId,strcat(MQTT_CLIENT_ID_ROOT,String(random(0xffff), HEX).c_str()));
     }
     
     
