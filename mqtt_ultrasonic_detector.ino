@@ -54,12 +54,14 @@ boolean settingsAreValid=false;
 String commandString = "";     // a String to hold incoming commands from serial
 bool commandComplete = false;  // goes true when enter is pressed
 
-int distance=0; //the last measurement
+int distance=0; //the last measurement; this goes to EEPROM after each measurement
 boolean itemPresent=false; //TRUE if some object is within range window
 unsigned long doneTimestamp=0; //used to allow publishes to complete before sleeping
 
 char* clientId = settings.mqttClientId;
-  
+
+//The distance measurement is stored in EEPROM right after the settings
+const unsigned int measurementLocation=sizeof(settings); 
 
 void setup() 
   {
@@ -74,7 +76,7 @@ void setup()
   
   while (!Serial); // wait here for serial port to connect.
 
-  EEPROM.begin(sizeof(settings)); //fire up the eeprom section of flash
+  EEPROM.begin(sizeof(settings)+sizeof(distance)); //fire up the eeprom section of flash
   Serial.print("Settings object size=");
   Serial.println(sizeof(settings));
     
@@ -92,39 +94,46 @@ void setup()
 
   if (settingsAreValid)
     {
-    // ********************* attempt to connect to Wifi network
-    Serial.print("Attempting to connect to WPA SSID \"");
-    Serial.print(settings.ssid);
-    Serial.println("\"");
+    //First thing, get a measurement and compare it with the last one stored in EEPROM.
+    //If they are the same, no need to phone home.
+    distance=measure(); 
+    bool changed=saveMeasurement(distance); //returns true if new value is different from last
     
-    WiFi.mode(WIFI_STA); //station mode, we are only a client in the wifi world
-    WiFi.begin(settings.ssid, settings.wifiPassword);
-    while (WiFi.status() != WL_CONNECTED) 
+    if (changed)
       {
-      // not yet connected
-      Serial.print(".");
-      checkForCommand(); // Check for input in case something needs to be changed to work
-      delay(500);
-      }
+      // ********************* attempt to connect to Wifi network
+      Serial.print("Attempting to connect to WPA SSID \"");
+      Serial.print(settings.ssid);
+      Serial.println("\"");
+      
+      WiFi.mode(WIFI_STA); //station mode, we are only a client in the wifi world
+      WiFi.begin(settings.ssid, settings.wifiPassword);
+      while (WiFi.status() != WL_CONNECTED) 
+        {
+        // not yet connected
+        Serial.print(".");
+        checkForCommand(); // Check for input in case something needs to be changed to work
+        delay(500);
+        }
+    
+      Serial.println("Connected to network.");
+      Serial.println();
   
-    Serial.println("Connected to network.");
-    Serial.println();
-
-    // ********************* Initialize the MQTT connection
-    mqttClient.setServer(settings.mqttBrokerAddress, settings.mqttBrokerPort);
-    mqttClient.setCallback(incomingMqttHandler);
-    reconnect();  // connect to the MQTT broker
-     
-  // let's do this 
-    distance=measure();
-    itemPresent=distance>settings.minimumPresenceDistance 
-                && distance<settings.maximumPresenceDistance;
-    report();
-    doneTimestamp=millis(); //this is to allow the publish to complete before sleeping
-    }
-  else
-    {
-    showSettings();
+      // ********************* Initialize the MQTT connection
+      mqttClient.setServer(settings.mqttBrokerAddress, settings.mqttBrokerPort);
+      mqttClient.setCallback(incomingMqttHandler);
+      reconnect();  // connect to the MQTT broker
+       
+    // let's do this 
+      itemPresent=distance>settings.minimumPresenceDistance 
+                  && distance<settings.maximumPresenceDistance;
+      report();
+      doneTimestamp=millis(); //this is to allow the publish to complete before sleeping
+      }
+    else
+      {
+      showSettings();
+      }
     }
   }
 
@@ -593,6 +602,17 @@ boolean saveSettings()
   return EEPROM.commit();
   }
 
+bool saveMeasurement(int dist)
+  {
+  int reading=0;
+  EEPROM.get(measurementLocation,reading);//read the last measurement
+  if (reading==dist) //if not changed, don't do anything
+    return false;
+  
+  EEPROM.put(measurementLocation,dist);
+  EEPROM.commit();
+  return true;  
+  }
   
 /*
   SerialEvent occurs whenever a new data comes in the hardware serial RX. This
