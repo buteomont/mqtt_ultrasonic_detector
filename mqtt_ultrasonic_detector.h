@@ -26,6 +26,7 @@
 #define MQTT_PAYLOAD_STATUS_COMMAND "status" //show the most recent flow values
 #define JSON_STATUS_SIZE SSID_SIZE+PASSWORD_SIZE+USERNAME_SIZE+MQTT_TOPIC_SIZE+50 //+50 for associated field names, etc
 #define PUBLISH_DELAY 400 //milliseconds to wait after publishing to MQTT to allow transaction to finish
+#define MAX_CHANGE_PCT 1 //percent distance change must be greater than this before reporting 
 
 // Error codes copied from the MQTT library
 #define MQTT_CONNECTION_REFUSED            -2

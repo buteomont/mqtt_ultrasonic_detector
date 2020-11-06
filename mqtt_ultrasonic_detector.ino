@@ -95,11 +95,18 @@ void setup()
   if (settingsAreValid)
     {
     //First thing, get a measurement and compare it with the last one stored in EEPROM.
-    //If they are the same, no need to phone home.
+    //If they are the same, no need to phone home.  
+    Serial.print("Measured distance: ");
     distance=measure(); 
-    bool changed=saveMeasurement(distance); //returns true if new value is different from last
+
+    int changepct=saveMeasurement(distance); //returns true if new value is different from last one
     
-    if (changed)
+    Serial.print(distance);
+    Serial.print(" (");
+    Serial.print(changepct);
+    Serial.println("%)");
+    
+    if (changepct>MAX_CHANGE_PCT)
       {
       // ********************* attempt to connect to Wifi network
       Serial.print("Attempting to connect to WPA SSID \"");
@@ -130,10 +137,10 @@ void setup()
       report();
       doneTimestamp=millis(); //this is to allow the publish to complete before sleeping
       }
-    else
-      {
-      showSettings();
-      }
+    }
+  else
+    {
+    showSettings();
     }
   }
 
@@ -545,7 +552,7 @@ boolean publish(char* topic, char* reading)
   Serial.print(topic);
   Serial.print(" ");
   Serial.println(reading);
-  return mqttClient.publish(topic,reading);
+  return mqttClient.publish(topic,reading,true); //retained
   }
 
   
@@ -602,16 +609,20 @@ boolean saveSettings()
   return EEPROM.commit();
   }
 
-bool saveMeasurement(int dist)
+/* saves the measurement and returns the 
+ * absolute value of the change in percent.
+ */
+int saveMeasurement(int dist)
   {
   int reading=0;
   EEPROM.get(measurementLocation,reading);//read the last measurement
-  if (reading==dist) //if not changed, don't do anything
-    return false;
-  
-  EEPROM.put(measurementLocation,dist);
-  EEPROM.commit();
-  return true;  
+  if (reading!=dist) //if not changed, don't do anything
+    {
+    EEPROM.put(measurementLocation,dist);
+    EEPROM.commit();
+    }
+  int change=(1-(float)dist/(float)reading)*100;
+  return abs(change);  
   }
   
 /*
