@@ -167,7 +167,7 @@ void incomingMqttHandler(char* reqTopic, byte* payload, unsigned int length)
   //if the command is MQTT_PAYLOAD_SETTINGS_COMMAND, send all of the settings
   if (strcmp(charbuf,MQTT_PAYLOAD_SETTINGS_COMMAND)==0)
     {
-    char tempbuf[15]; //for converting numbers to strings
+    char tempbuf[35]; //for converting numbers to strings
     char jsonStatus[JSON_STATUS_SIZE];
     
     strcpy(jsonStatus,"{");
