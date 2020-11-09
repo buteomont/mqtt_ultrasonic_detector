@@ -17,7 +17,7 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.11.06.1"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.11.09.1"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>
@@ -186,6 +186,18 @@ void incomingMqttHandler(char* reqTopic, byte* payload, unsigned int length)
     strcat(jsonStatus,settings.ssid);
     strcat(jsonStatus,"\", \"wifipass\":\"");
     strcat(jsonStatus,settings.wifiPassword);
+    strcat(jsonStatus,"\", \"minimumPresenceDistance\":\"");
+    sprintf(tempbuf,"%d",settings.minimumPresenceDistance);
+    strcat(jsonStatus,tempbuf);
+    strcat(jsonStatus,"\", \"maximumPresenceDistance\":\"");
+    sprintf(tempbuf,"%d",settings.maximumPresenceDistance);
+    strcat(jsonStatus,tempbuf);
+    strcat(jsonStatus,"\", \"sleepTime\":\"");
+    sprintf(tempbuf,"%d",settings.sleepTime);
+    strcat(jsonStatus,tempbuf);
+    strcat(jsonStatus,"\", \"mqttClientId\":\"");
+    strcat(jsonStatus,settings.mqttClientId);
+    
     strcat(jsonStatus,"\"}");
     response=jsonStatus;
     }
