@@ -127,6 +127,7 @@ void setup()
       Serial.println();
   
       // ********************* Initialize the MQTT connection
+      mqttClient.setBufferSize(JSON_STATUS_SIZE);
       mqttClient.setServer(settings.mqttBrokerAddress, settings.mqttBrokerPort);
       mqttClient.setCallback(incomingMqttHandler);
       reconnect();  // connect to the MQTT broker
