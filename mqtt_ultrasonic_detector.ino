@@ -17,7 +17,7 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.11.09.1"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.11.10.2"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>
@@ -46,6 +46,7 @@ typedef struct
   int maximumPresenceDistance=400;// and distance is less than this
   int sleepTime=10; //seconds to sleep between distance checks
   char mqttClientId[MQTT_CLIENTID_SIZE]=""; //will be the same across reboots
+  bool debug=false;
   } conf;
 
 conf settings; //all settings in one struct makes it easier to store in EEPROM
@@ -58,10 +59,10 @@ int distance=0; //the last measurement; this goes to EEPROM after each measureme
 boolean itemPresent=false; //TRUE if some object is within range window
 unsigned long doneTimestamp=0; //used to allow publishes to complete before sleeping
 
-char* clientId = settings.mqttClientId;
-
 //The distance measurement is stored in EEPROM right after the settings
 const unsigned int measurementLocation=sizeof(settings); 
+
+ADC_MODE(ADC_VCC); //so we can use the ADC to measure the battery voltage
 
 void setup() 
   {
@@ -109,27 +110,9 @@ void setup()
     if (changepct>MAX_CHANGE_PCT)
       {
       // ********************* attempt to connect to Wifi network
-      Serial.print("Attempting to connect to WPA SSID \"");
-      Serial.print(settings.ssid);
-      Serial.println("\"");
-      
-      WiFi.mode(WIFI_STA); //station mode, we are only a client in the wifi world
-      WiFi.begin(settings.ssid, settings.wifiPassword);
-      while (WiFi.status() != WL_CONNECTED) 
-        {
-        // not yet connected
-        Serial.print(".");
-        checkForCommand(); // Check for input in case something needs to be changed to work
-        delay(500);
-        }
-    
-      Serial.println("Connected to network.");
-      Serial.println();
-  
+      connectToWiFi();
+        
       // ********************* Initialize the MQTT connection
-      mqttClient.setBufferSize(JSON_STATUS_SIZE);
-      mqttClient.setServer(settings.mqttBrokerAddress, settings.mqttBrokerPort);
-      mqttClient.setCallback(incomingMqttHandler);
       reconnect();  // connect to the MQTT broker
        
     // let's do this 
@@ -145,6 +128,31 @@ void setup()
     }
   }
 
+/*
+ * If not connected to wifi, connect.
+ */
+void connectToWiFi()
+  {
+  if (WiFi.status() != WL_CONNECTED)
+    {
+    Serial.print("Attempting to connect to WPA SSID \"");
+    Serial.print(settings.ssid);
+    Serial.println("\"");
+    
+    WiFi.mode(WIFI_STA); //station mode, we are only a client in the wifi world
+    WiFi.begin(settings.ssid, settings.wifiPassword);
+    while (WiFi.status() != WL_CONNECTED) 
+      {
+      // not yet connected
+      Serial.print(".");
+      checkForCommand(); // Check for input in case something needs to be changed to work
+      delay(500);
+      }
+  
+    Serial.println("Connected to network.");
+    Serial.println();
+    }
+  }
 
 /**
  * Handler for incoming MQTT messages.  The payload is the command to perform. 
@@ -157,7 +165,7 @@ void setup()
  */
 void incomingMqttHandler(char* reqTopic, byte* payload, unsigned int length) 
   {
-  Serial.println("Callback works.");
+  Serial.println("====================================> Callback works.");
   payload[length]='\0'; //this should have been done in the caller code, shouldn't have to do it here
   boolean rebootScheduled=false; //so we can reboot after sending the reboot response
   char charbuf[100];
@@ -223,6 +231,10 @@ void incomingMqttHandler(char* reqTopic, byte* payload, unsigned int length)
     response=tmp;
     rebootScheduled=true;
     }
+  else if (processCommand(charbuf))
+    {
+    response="OK";
+    }
   else
     {
     char badCmd[18];
@@ -246,9 +258,11 @@ void incomingMqttHandler(char* reqTopic, byte* payload, unsigned int length)
  
 void loop()
   {
+  mqttClient.loop(); //This has to happen every so often or we get disconnected for some reason
   checkForCommand(); // Check for input in case something needs to be changed to work
   if (settingsAreValid && settings.sleepTime==0) //if sleepTime is zero then don't sleep
     {
+    connectToWiFi(); //may need to connect to the wifi
     reconnect();  // may need to reconnect to the MQTT broker
     distance=measure();
     itemPresent=distance>settings.minimumPresenceDistance 
@@ -365,6 +379,9 @@ void showSettings()
   Serial.println(")");
   Serial.print("MQTT Client ID is ");
   Serial.println(settings.mqttClientId);
+  Serial.print("debug=1|0 (");
+  Serial.print(settings.debug);
+  Serial.println(")");
   Serial.println("\n*** Use \"factorydefaults=yes\" to reset all settings ***\n");
   }
 
@@ -375,11 +392,15 @@ void reconnect()
   {
   // Loop until we're reconnected
   while (!mqttClient.connected()) 
-    {
+    {      
     Serial.print("Attempting MQTT connection...");
+
+    mqttClient.setBufferSize(JSON_STATUS_SIZE); //default (256) isn't big enough
+    mqttClient.setServer(settings.mqttBrokerAddress, settings.mqttBrokerPort);
+    mqttClient.setCallback(incomingMqttHandler);
     
     // Attempt to connect
-    if (mqttClient.connect(clientId,settings.mqttUsername,settings.mqttPassword))
+    if (mqttClient.connect(settings.mqttClientId,settings.mqttUsername,settings.mqttPassword))
       {
       Serial.println("connected to MQTT broker.");
 
@@ -387,7 +408,8 @@ void reconnect()
       char topic[MQTT_TOPIC_SIZE];
       strcpy(topic,settings.mqttTopicRoot);
       strcat(topic,MQTT_TOPIC_COMMAND_REQUEST);
-      mqttClient.subscribe(topic);
+      bool subgood=mqttClient.subscribe(topic);
+      showSub(topic,subgood);
       }
     else 
       {
@@ -401,6 +423,18 @@ void reconnect()
       
       delay(1000);
       }
+    }
+  mqttClient.loop(); //This has to happen every so often or we get disconnected for some reason
+  }
+
+void showSub(char* topic, bool subgood)
+  {
+  if (settings.debug)
+    {
+    Serial.print("++++++Subscribing to ");
+    Serial.print(topic);
+    Serial.print(":");
+    Serial.println(subgood);
     }
   }
 
@@ -423,7 +457,7 @@ String getConfigCommand()
   else return "";
   }
 
-void processCommand(String cmd)
+bool processCommand(String cmd)
   {
   const char *str=cmd.c_str();
   char *val=NULL;
@@ -438,8 +472,7 @@ void processCommand(String cmd)
   if (nme==NULL || val==NULL || strlen(nme)==0 || strlen(val)==0)
     {
     showSettings();
-    
-    return;  
+    return false;   //not a valid command, or it's missing
     }
   else if (strcmp(nme,"broker")==0)
     {
@@ -491,6 +524,16 @@ void processCommand(String cmd)
     settings.sleepTime=atoi(val);
     saveSettings();
     }
+  else if (strcmp(nme,"debug")==0)
+    {
+    settings.debug=atoi(val)==1?true:false;
+    saveSettings();
+    }
+  else if ((strcmp(nme,"resetmqttid")==0)&& (strcmp(val,"yes")==0))
+    {
+    generateMqttClientId();
+    saveSettings();
+    }
  else if ((strcmp(nme,"factorydefaults")==0) && (strcmp(val,"yes")==0)) //reset all eeprom settings
     {
     Serial.println("\n*********************** Resetting EEPROM Values ************************");
@@ -500,8 +543,11 @@ void processCommand(String cmd)
     ESP.restart();
     }
   else
+    {
     showSettings();
-  return;
+    return false; //command not found
+    }
+  return true;
   }
 
 void initializeSettings()
@@ -517,7 +563,7 @@ void initializeSettings()
   settings.minimumPresenceDistance=0;
   settings.maximumPresenceDistance=400;
   settings.sleepTime=10;
-  strcpy(settings.mqttClientId,strcat(MQTT_CLIENT_ID_ROOT,String(random(0xffff), HEX).c_str()));
+  strcpy(settings.mqttClientId,generateMqttClientId());
   }
 
 void checkForCommand()
@@ -533,6 +579,23 @@ void checkForCommand()
     }
   }
 
+int readBattery()
+  {
+  int raw=ESP.getVcc(); //This commandeers the ADC port
+  if (settings.debug)
+    {
+    Serial.print("Raw battery reading is ");  
+    Serial.println(raw);
+    }
+  return raw;
+  }
+
+float convertToVoltage(int raw)
+  {
+  int vcc=map(raw,0,FULL_BATTERY,0,330);
+  return ((float)vcc)/100.0;
+  }
+
 
 /************************
  * Do the MQTT thing
@@ -542,6 +605,14 @@ void report()
   char topic[MQTT_TOPIC_SIZE];
   char reading[18];
   boolean success=false;
+
+  //publish the battery voltage
+  strcpy(topic,settings.mqttTopicRoot);
+  strcat(topic,MQTT_TOPIC_BATTERY);
+  sprintf(reading,"%.2f",convertToVoltage(readBattery())); 
+  success=publish(topic,reading);
+  if (!success)
+    Serial.println("************ Failed publishing battery voltage!");
 
   //publish the distance measurement
   strcpy(topic,settings.mqttTopicRoot);
@@ -614,7 +685,7 @@ boolean saveSettings()
   //The mqttClientId is not set by the user, but we need to make sure it's set  
   if (strlen(settings.mqttClientId)==0)
     {
-    strcpy(settings.mqttClientId,strcat(MQTT_CLIENT_ID_ROOT,String(random(0xffff), HEX).c_str()));
+    strcpy(settings.mqttClientId,generateMqttClientId());
     }
     
     
@@ -636,6 +707,19 @@ int saveMeasurement(int dist)
     }
   int change=(1-(float)dist/(float)reading)*100;
   return abs(change);  
+  }
+
+//Generate an MQTT client ID.  This should not be necessary very often
+char* generateMqttClientId()
+  {
+  char tmpbuf[MQTT_CLIENTID_SIZE]="";
+  strcpy(tmpbuf,strcat(MQTT_CLIENT_ID_ROOT,String(random(0xffff), HEX).c_str()));
+  if (settings.debug)
+    {
+    Serial.print("New MQTT userid is ");
+    Serial.println(tmpbuf);
+    }
+  return tmpbuf;
   }
   
 /*
