@@ -28,7 +28,8 @@
 #define JSON_STATUS_SIZE SSID_SIZE+PASSWORD_SIZE+USERNAME_SIZE+MQTT_TOPIC_SIZE+50 //+50 for associated field names, etc
 #define PUBLISH_DELAY 400 //milliseconds to wait after publishing to MQTT to allow transaction to finish
 #define MAX_CHANGE_PCT 2 //percent distance change must be greater than this before reporting
-#define FULL_BATTERY 2965 
+#define FULL_BATTERY 2965
+#define ONE_HOUR 3600000 //milliseconds
 
 // Error codes copied from the MQTT library
 #define MQTT_CONNECTION_REFUSED            -2

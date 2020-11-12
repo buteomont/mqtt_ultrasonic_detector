@@ -2,7 +2,8 @@
  * This is an ESP8266 program to measure distance with an HC-SR04
  * ulrasonic ranger, and report over MQTT whether or not some object
  * is within a specified distance window.  It utilizes the ESP8266's  
- * sleep mode to maximize battery life.
+ * sleep mode to maximize battery life.  It will wake up at least
+ * once per hour to let you know it's still alive.
  *
  * Configuration is done via serial connection.  Enter:
  *  broker=<broker name or address>
@@ -17,7 +18,7 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.11.10.2"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.11.11.2"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>
@@ -62,6 +63,19 @@ unsigned long doneTimestamp=0; //used to allow publishes to complete before slee
 //The distance measurement is stored in EEPROM right after the settings
 const unsigned int measurementLocation=sizeof(settings); 
 
+//We should report at least once per hour, whether we have a package or not.  This
+//will also let us retrieve any outstanding MQTT messages.  Since the internal millis()
+//counter is reset every time it wakes up, we need to save it before sleeping and restore
+//it when waking up. To keep from killing our flash memory, we'll store it in the RTC
+//memory, which is kept alive by the battery or power supply.
+typedef struct
+  {
+  long nextHealthReportTime=0; 
+  unsigned long rtc=0;
+  } MY_RTC;
+  
+MY_RTC myRtc;
+
 ADC_MODE(ADC_VCC); //so we can use the ADC to measure the battery voltage
 
 void setup() 
@@ -77,10 +91,9 @@ void setup()
   
   while (!Serial); // wait here for serial port to connect.
 
+  system_rtc_mem_read(64, &myRtc, sizeof(myRtc)); //read the last saved timestamp before we slept
+  
   EEPROM.begin(sizeof(settings)+sizeof(distance)); //fire up the eeprom section of flash
-  Serial.print("Settings object size=");
-  Serial.println(sizeof(settings));
-    
   commandString.reserve(200); // reserve 200 bytes of serial buffer space for incoming command string
 
   loadSettings(); //set the values from eeprom
@@ -95,8 +108,19 @@ void setup()
 
   if (settingsAreValid)
     {
-    //First thing, get a measurement and compare it with the last one stored in EEPROM.
-    //If they are the same, no need to phone home.  
+    if (settings.debug)
+      {
+      Serial.print("Settings object size=");
+      Serial.println(sizeof(settings));
+      Serial.print("Read RTC: ");
+      Serial.println(myRtc.rtc);
+      Serial.print("Read nextHealthReportTime: ");
+      Serial.println(myRtc.nextHealthReportTime);
+      }
+      
+    //Get a measurement and compare it with the last one stored in EEPROM.
+    //If they are the same, no need to phone home. Unless an hour has passed since
+    //the last time home was phoned. 
     Serial.print("Measured distance: ");
     distance=measure(); 
 
@@ -106,8 +130,16 @@ void setup()
     Serial.print(" (");
     Serial.print(changepct);
     Serial.println("%)");
+
+    if (settings.debug)
+      {
+      Serial.print("clock/next report: ");
+      Serial.print(myMillis());
+      Serial.print("/");
+      Serial.println(myRtc.nextHealthReportTime);
+      }
     
-    if (changepct>MAX_CHANGE_PCT)
+    if (changepct>MAX_CHANGE_PCT || myMillis()>myRtc.nextHealthReportTime)
       {
       // ********************* attempt to connect to Wifi network
       connectToWiFi();
@@ -115,11 +147,12 @@ void setup()
       // ********************* Initialize the MQTT connection
       reconnect();  // connect to the MQTT broker
        
-    // let's do this 
+      // let's do this 
       itemPresent=distance>settings.minimumPresenceDistance 
                   && distance<settings.maximumPresenceDistance;
       report();
       doneTimestamp=millis(); //this is to allow the publish to complete before sleeping
+      myRtc.nextHealthReportTime=myMillis()+ONE_HOUR;
       }
     }
   else
@@ -165,7 +198,10 @@ void connectToWiFi()
  */
 void incomingMqttHandler(char* reqTopic, byte* payload, unsigned int length) 
   {
-  Serial.println("====================================> Callback works.");
+  if (settings.debug)
+    {
+    Serial.println("====================================> Callback works.");
+    }
   payload[length]='\0'; //this should have been done in the caller code, shouldn't have to do it here
   boolean rebootScheduled=false; //so we can reboot after sending the reboot response
   char charbuf[100];
@@ -275,8 +311,28 @@ void loop()
     Serial.print("Sleeping for ");
     Serial.print(settings.sleepTime);
     Serial.println(" seconds");
+
+    //save the wakeup time so we can keep track of time across sleeps
+    myRtc.rtc=myMillis()+settings.sleepTime*1000;
+    system_rtc_mem_write(64, &myRtc, sizeof(myRtc)); //save the timing before we sleep
+    if (settings.debug)
+      {
+      Serial.print("Wrote RTC: ");
+      Serial.println(myRtc.rtc);
+      Serial.print("Wrote nextHealthReportTime: ");
+      Serial.println(myRtc.nextHealthReportTime);
+      }
+      
     ESP.deepSleep(settings.sleepTime*1000000);
     } 
+  }
+
+/*
+ * This returns the elapsed milliseconds, even if we've been sleeping
+ */
+unsigned long myMillis()
+  {
+  return millis()+myRtc.rtc;
   }
 
 // Read the distance 10 times and return the dominant value
@@ -649,8 +705,11 @@ void loadSettings()
   if (settings.validConfig==VALID_SETTINGS_FLAG)    //skip loading stuff if it's never been written
     {
     settingsAreValid=true;
-    Serial.println("Loaded configuration values from EEPROM");
-//    showSettings();
+    if (settings.debug)
+      {
+      Serial.println("Loaded configuration values from EEPROM");
+      showSettings();
+      }
     }
   else
     {
