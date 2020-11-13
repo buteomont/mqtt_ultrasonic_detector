@@ -108,15 +108,15 @@ void setup()
 
   if (settingsAreValid)
     {
-    if (settings.debug)
-      {
-      Serial.print("Settings object size=");
-      Serial.println(sizeof(settings));
-      Serial.print("Read RTC: ");
-      Serial.println(myRtc.rtc);
-      Serial.print("Read nextHealthReportTime: ");
-      Serial.println(myRtc.nextHealthReportTime);
-      }
+//    if (settings.debug)
+//      {
+//      Serial.print("Settings object size=");
+//      Serial.println(sizeof(settings));
+//      Serial.print("Read RTC: ");
+//      Serial.println(myRtc.rtc);
+//      Serial.print("Read nextHealthReportTime: ");
+//      Serial.println(myRtc.nextHealthReportTime);
+//      }
       
     //Get a measurement and compare it with the last one stored in EEPROM.
     //If they are the same, no need to phone home. Unless an hour has passed since
@@ -127,17 +127,12 @@ void setup()
     int changepct=saveMeasurement(distance); //returns true if new value is different from last one
     
     Serial.print(distance);
-    Serial.print(" (");
+    Serial.print(" cm (");
     Serial.print(changepct);
-    Serial.println("%)");
+    Serial.println("% changed)");
 
-    if (settings.debug)
-      {
-      Serial.print("clock/next report: ");
-      Serial.print(myMillis());
-      Serial.print("/");
-      Serial.println(myRtc.nextHealthReportTime);
-      }
+    Serial.print("Battery voltage: ");
+    Serial.println(convertToVoltage(readBattery()));
     
     if (changepct>MAX_CHANGE_PCT || myMillis()>myRtc.nextHealthReportTime)
       {
@@ -308,6 +303,12 @@ void loop()
   else if (settingsAreValid                        //setup has been done and
           && millis()-doneTimestamp>PUBLISH_DELAY) //waited long enough for report to finish
     {
+    if (settings.debug)
+      {
+      Serial.print("Next report in ");
+      Serial.print((myRtc.nextHealthReportTime-myMillis())/1000);
+      Serial.println(" seconds.");
+      }
     Serial.print("Sleeping for ");
     Serial.print(settings.sleepTime);
     Serial.println(" seconds");
@@ -315,13 +316,7 @@ void loop()
     //save the wakeup time so we can keep track of time across sleeps
     myRtc.rtc=myMillis()+settings.sleepTime*1000;
     system_rtc_mem_write(64, &myRtc, sizeof(myRtc)); //save the timing before we sleep
-    if (settings.debug)
-      {
-      Serial.print("Wrote RTC: ");
-      Serial.println(myRtc.rtc);
-      Serial.print("Wrote nextHealthReportTime: ");
-      Serial.println(myRtc.nextHealthReportTime);
-      }
+    
       
     ESP.deepSleep(settings.sleepTime*1000000);
     } 
@@ -638,11 +633,6 @@ void checkForCommand()
 int readBattery()
   {
   int raw=ESP.getVcc(); //This commandeers the ADC port
-  if (settings.debug)
-    {
-    Serial.print("Raw battery reading is ");  
-    Serial.println(raw);
-    }
   return raw;
   }
 
@@ -708,7 +698,7 @@ void loadSettings()
     if (settings.debug)
       {
       Serial.println("Loaded configuration values from EEPROM");
-      showSettings();
+//      showSettings();
       }
     }
   else
