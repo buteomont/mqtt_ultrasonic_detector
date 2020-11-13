@@ -18,7 +18,7 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.11.11.2"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.11.13.1"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>
@@ -277,7 +277,7 @@ void incomingMqttHandler(char* reqTopic, byte* payload, unsigned int length)
   strcpy(topic,settings.mqttTopicRoot);
   strcat(topic,charbuf); //the incoming command becomes the topic suffix
 
-  if (!publish(topic,response))
+  if (!publish(topic,response,false)) //do not retain
     Serial.println("************ Failure when publishing status response!");
   
   if (rebootScheduled)
@@ -656,7 +656,7 @@ void report()
   strcpy(topic,settings.mqttTopicRoot);
   strcat(topic,MQTT_TOPIC_BATTERY);
   sprintf(reading,"%.2f",convertToVoltage(readBattery())); 
-  success=publish(topic,reading);
+  success=publish(topic,reading,true); //retain
   if (!success)
     Serial.println("************ Failed publishing battery voltage!");
 
@@ -664,7 +664,7 @@ void report()
   strcpy(topic,settings.mqttTopicRoot);
   strcat(topic,MQTT_TOPIC_DISTANCE);
   sprintf(reading,"%d",distance); 
-  success=publish(topic,reading);
+  success=publish(topic,reading,true); //retain
   if (!success)
     Serial.println("************ Failed publishing distance measurement!");
 
@@ -672,17 +672,17 @@ void report()
   strcpy(topic,settings.mqttTopicRoot);
   strcat(topic,MQTT_TOPIC_STATE);
   sprintf(reading,"%s",itemPresent?"YES":"NO"); //item within range window
-  success=publish(topic,reading);
+  success=publish(topic,reading,true); //retain
   if (!success)
     Serial.println("************ Failed publishing sensor state!");
   }
 
-boolean publish(char* topic, char* reading)
+boolean publish(char* topic, char* reading, bool retain)
   {
   Serial.print(topic);
   Serial.print(" ");
   Serial.println(reading);
-  return mqttClient.publish(topic,reading,true); //retained
+  return mqttClient.publish(topic,reading,retain); 
   }
 
   
