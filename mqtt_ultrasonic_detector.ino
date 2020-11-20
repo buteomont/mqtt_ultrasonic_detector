@@ -18,7 +18,7 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.11.13.1"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.11.19.1"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>
@@ -56,12 +56,14 @@ boolean settingsAreValid=false;
 String commandString = "";     // a String to hold incoming commands from serial
 bool commandComplete = false;  // goes true when enter is pressed
 
-int distance=0; //the last measurement; this goes to EEPROM after each measurement
-boolean itemPresent=false; //TRUE if some object is within range window
 unsigned long doneTimestamp=0; //used to allow publishes to complete before sleeping
 
-//The distance measurement is stored in EEPROM right after the settings
-const unsigned int measurementLocation=sizeof(settings); 
+//This is true if a package is detected. It will be written to RTC memory 
+// as "wasPresent" just before sleeping
+bool isPresent=false;
+
+//This is the distance measured on this pass. It will be written to RTC memory just before sleeping
+int distance=0;
 
 //We should report at least once per hour, whether we have a package or not.  This
 //will also let us retrieve any outstanding MQTT messages.  Since the internal millis()
@@ -70,8 +72,11 @@ const unsigned int measurementLocation=sizeof(settings);
 //memory, which is kept alive by the battery or power supply.
 typedef struct
   {
-  long nextHealthReportTime=0; 
-  unsigned long rtc=0;
+  unsigned long nextHealthReportTime=0;//the RTC for the next report, regardless of readings
+  unsigned long rtc=0;        //the RTC maintained over sleep periods
+  bool wasPresent=false;      //Package present on last check
+  bool presentReported=false; //MQTT Package Present report was sent
+  bool absentReported=false;  //MQTT Package Removed report was sent
   } MY_RTC;
   
 MY_RTC myRtc;
@@ -91,9 +96,9 @@ void setup()
   
   while (!Serial); // wait here for serial port to connect.
 
-  system_rtc_mem_read(64, &myRtc, sizeof(myRtc)); //read the last saved timestamp before we slept
+  system_rtc_mem_read(64, &myRtc, sizeof(myRtc)); //load the last saved timestamps from before we slept
   
-  EEPROM.begin(sizeof(settings)+sizeof(distance)); //fire up the eeprom section of flash
+  EEPROM.begin(sizeof(settings)); //fire up the eeprom section of flash
   commandString.reserve(200); // reserve 200 bytes of serial buffer space for incoming command string
 
   loadSettings(); //set the values from eeprom
@@ -118,44 +123,120 @@ void setup()
 //      Serial.println(myRtc.nextHealthReportTime);
 //      }
       
-    //Get a measurement and compare it with the last one stored in EEPROM.
+    //Get a measurement and compare the presence with the last one stored in EEPROM.
     //If they are the same, no need to phone home. Unless an hour has passed since
     //the last time home was phoned. 
-    Serial.print("Measured distance: ");
     distance=measure(); 
+    isPresent=distance>settings.minimumPresenceDistance 
+                && distance<settings.maximumPresenceDistance;
 
-    int changepct=saveMeasurement(distance); //returns true if new value is different from last one
     
+    Serial.print("**************\nThis measured distance: ");
     Serial.print(distance);
-    Serial.print(" cm (");
-    Serial.print(changepct);
-    Serial.println("% changed)");
+    Serial.println(" cm ");
+
+    Serial.print("Package ");
+    Serial.print(isPresent?"is":"is not");
+    Serial.println(" present");
 
     Serial.print("Battery voltage: ");
     Serial.println(convertToVoltage(readBattery()));
-    
-    if (changepct>MAX_CHANGE_PCT || myMillis()>myRtc.nextHealthReportTime)
-      {
-      // ********************* attempt to connect to Wifi network
-      connectToWiFi();
-        
-      // ********************* Initialize the MQTT connection
-      reconnect();  // connect to the MQTT broker
-       
-      // let's do this 
-      itemPresent=distance>settings.minimumPresenceDistance 
-                  && distance<settings.maximumPresenceDistance;
-      report();
-      doneTimestamp=millis(); //this is to allow the publish to complete before sleeping
-      myRtc.nextHealthReportTime=myMillis()+ONE_HOUR;
-      }
+
+    sendOrNot(); //decide whether or not to send a report
     }
   else
     {
     showSettings();
     }
   }
+ 
+void loop()
+  {
+  mqttClient.loop(); //This has to happen every so often or we get disconnected for some reason
+  checkForCommand(); // Check for input in case something needs to be changed to work
+  if (settingsAreValid && settings.sleepTime==0) //if sleepTime is zero then don't sleep
+    {
+    connectToWiFi(); //may need to connect to the wifi
+    reconnect();  // may need to reconnect to the MQTT broker
+    distance=measure();
+    isPresent=distance>settings.minimumPresenceDistance 
+              && distance<settings.maximumPresenceDistance;
+    report();    
+    } 
+  else if (settingsAreValid                        //setup has been done and
+          && millis()-doneTimestamp>PUBLISH_DELAY) //waited long enough for report to finish
+    {
+    if (settings.debug)
+      {
+      Serial.print("Next report in ");
+      Serial.print((myRtc.nextHealthReportTime-myMillis())/1000);
+      Serial.println(" seconds.");
+      }
+    Serial.print("Sleeping for ");
+    Serial.print(settings.sleepTime);
+    Serial.println(" seconds");
 
+    //save the wakeup time so we can keep track of time across sleeps
+    myRtc.rtc=myMillis()+settings.sleepTime*1000;
+    myRtc.wasPresent=isPresent; //this presence flag becomes the last presence flag
+    saveRTC(); //save the timing before we sleep 
+      
+    ESP.deepSleep(settings.sleepTime*1000000);
+    } 
+  }
+
+/**
+ * This routine will decide if a report needs to be sent, and send it if so.
+ * The decision is based on whether or not a package was detected for two
+ * successive checks. If two successive checks show that the package is 
+ * present, or two succesive checks show that the package is not present,
+ * then send the report once.  Don't send another report until two successive
+ * checks show the opposite or until an hour has passed, whichever comes first.
+ * The truth table is:
+ * Last |This |Present |Absent  |Send It and
+ * Check|Check|Msg Sent|Msg Sent|Do This 
+ * -----+-----+--------+--------+-------------------------------
+ * No   | No  | N/A    | False  | Yes, set "Absent Sent"=true, "Present Sent"=false
+ * No   | No  | N/A    | True   | No
+ * No   | Yes | N/A    | N/A    | No
+ * No   | Yes | N/A    | N/A    | No
+ * Yes  | No  | N/A    | N/A    | No
+ * Yes  | No  | N/A    | N/A    | No
+ * Yes  | Yes | False  | N/A    | Yes, set "Present Sent"=true, "Absent Sent"=false
+ * Yes  | Yes | True   | N/A    | No
+ */
+void sendOrNot()
+  {
+  if (myMillis()>myRtc.nextHealthReportTime
+      ||((!myRtc.wasPresent && !isPresent) && !myRtc.absentReported)
+      ||(myRtc.wasPresent && isPresent) && !myRtc.presentReported)
+    {      
+    // ********************* attempt to connect to Wifi network
+    connectToWiFi();
+      
+    // ********************* Initialize the MQTT connection
+    reconnect();  // connect to the MQTT broker
+     
+    report();
+
+    if (isPresent)
+      {
+      myRtc.presentReported=true;
+      myRtc.absentReported=false;
+      }
+    else
+      {
+      myRtc.absentReported=true;
+      myRtc.presentReported=false;
+      }
+    
+    doneTimestamp=millis(); //this is to allow the publish to complete before sleeping
+    myRtc.nextHealthReportTime=myMillis()+ONE_HOUR;
+    }
+  
+  }
+
+  
 /*
  * If not connected to wifi, connect.
  */
@@ -286,41 +367,7 @@ void incomingMqttHandler(char* reqTopic, byte* payload, unsigned int length)
     ESP.restart();
     }
   }
- 
-void loop()
-  {
-  mqttClient.loop(); //This has to happen every so often or we get disconnected for some reason
-  checkForCommand(); // Check for input in case something needs to be changed to work
-  if (settingsAreValid && settings.sleepTime==0) //if sleepTime is zero then don't sleep
-    {
-    connectToWiFi(); //may need to connect to the wifi
-    reconnect();  // may need to reconnect to the MQTT broker
-    distance=measure();
-    itemPresent=distance>settings.minimumPresenceDistance 
-                && distance<settings.maximumPresenceDistance;
-    report();    
-    } 
-  else if (settingsAreValid                        //setup has been done and
-          && millis()-doneTimestamp>PUBLISH_DELAY) //waited long enough for report to finish
-    {
-    if (settings.debug)
-      {
-      Serial.print("Next report in ");
-      Serial.print((myRtc.nextHealthReportTime-myMillis())/1000);
-      Serial.println(" seconds.");
-      }
-    Serial.print("Sleeping for ");
-    Serial.print(settings.sleepTime);
-    Serial.println(" seconds");
 
-    //save the wakeup time so we can keep track of time across sleeps
-    myRtc.rtc=myMillis()+settings.sleepTime*1000;
-    system_rtc_mem_write(64, &myRtc, sizeof(myRtc)); //save the timing before we sleep
-    
-      
-    ESP.deepSleep(settings.sleepTime*1000000);
-    } 
-  }
 
 /*
  * This returns the elapsed milliseconds, even if we've been sleeping
@@ -671,7 +718,7 @@ void report()
   //publish the object detection state
   strcpy(topic,settings.mqttTopicRoot);
   strcat(topic,MQTT_TOPIC_STATE);
-  sprintf(reading,"%s",itemPresent?"YES":"NO"); //item within range window
+  sprintf(reading,"%s",isPresent?"YES":"NO"); //item within range window
   success=publish(topic,reading,true); //retain
   if (!success)
     Serial.println("************ Failed publishing sensor state!");
@@ -737,26 +784,18 @@ boolean saveSettings()
     strcpy(settings.mqttClientId,generateMqttClientId());
     }
     
-    
   EEPROM.put(0,settings);
   return EEPROM.commit();
   }
 
-/* saves the measurement and returns the 
- * absolute value of the change in percent.
+/*
+ * Save the pan-sleep information to the RTC battery-backed RAM
  */
-int saveMeasurement(int dist)
+void saveRTC()
   {
-  int reading=0;
-  EEPROM.get(measurementLocation,reading);//read the last measurement
-  if (reading!=dist) //if not changed, don't do anything
-    {
-    EEPROM.put(measurementLocation,dist);
-    EEPROM.commit();
-    }
-  int change=(1-(float)dist/(float)reading)*100;
-  return abs(change);  
+  system_rtc_mem_write(64, &myRtc, sizeof(myRtc)); 
   }
+
 
 //Generate an MQTT client ID.  This should not be necessary very often
 char* generateMqttClientId()
