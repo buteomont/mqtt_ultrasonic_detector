@@ -9,7 +9,7 @@
  *  broker=<broker name or address>
  *  port=<port number>   (defaults to 1883)
  *  topicroot=<topic root> (something like buteomont/water/pressure/ - must end with / and 
- *  "state" or "period" will be added)
+ *  "present", "distance" or "voltage" will be added)
  *  user=<mqtt user>
  *  pass=<mqtt password>
  *  ssid=<wifi ssid>
@@ -18,7 +18,7 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.11.19.1"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.11.22.1"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>

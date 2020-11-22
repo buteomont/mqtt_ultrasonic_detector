@@ -16,7 +16,6 @@
 #define MQTT_TOPIC_SIZE 150
 #define MQTT_TOPIC_DISTANCE "distance"
 #define MQTT_TOPIC_STATE "present"
-#define MQTT_TOPIC_PERIOD "period"
 #define MQTT_TOPIC_BATTERY "battery"
 #define MQTT_CLIENT_ID_ROOT "UltrasonicDetector"
 #define MQTT_TOPIC_COMMAND_REQUEST "command"
