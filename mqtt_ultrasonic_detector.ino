@@ -18,7 +18,7 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.11.22.1"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.11.26.1"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>
@@ -85,6 +85,11 @@ ADC_MODE(ADC_VCC); //so we can use the ADC to measure the battery voltage
 
 void setup() 
   {
+  //Immediately turn off the WiFi radio (it comes on when we wake up)
+  WiFi.mode( WIFI_OFF );
+  WiFi.forceSleepBegin();  
+  yield();
+  
   pinMode(TRIG_PIN, OUTPUT);  // The trigger pin will tell the sensor to send a pulse
   digitalWrite(TRIG_PIN, LOW);// normally low
   pinMode(ECHO_PIN, INPUT);   // The echo pin is where the reflected pulse comes back
@@ -135,9 +140,8 @@ void setup()
     Serial.print(distance);
     Serial.println(" cm ");
 
-    Serial.print("Package ");
-    Serial.print(isPresent?"is":"is not");
-    Serial.println(" present");
+    Serial.print("Package is ");
+    Serial.println(isPresent?"present":"absent");
 
     Serial.print("Battery voltage: ");
     Serial.println(convertToVoltage(readBattery()));
@@ -176,12 +180,22 @@ void loop()
     Serial.print(settings.sleepTime);
     Serial.println(" seconds");
 
+    //RTC memory is wierd, I'm not sure I understand how it works on the 8266.
+    //Reset the health report if it's way wrong
+    if (myRtc.nextHealthReportTime-myMillis()>ONE_HOUR)
+      {
+      Serial.println("------------Fixing bogus health report time-------------");
+      myRtc.nextHealthReportTime=myMillis();
+      }
+
     //save the wakeup time so we can keep track of time across sleeps
     myRtc.rtc=myMillis()+settings.sleepTime*1000;
     myRtc.wasPresent=isPresent; //this presence flag becomes the last presence flag
     saveRTC(); //save the timing before we sleep 
-      
-    ESP.deepSleep(settings.sleepTime*1000000);
+    
+    WiFi.disconnect(true);
+    yield();  
+    ESP.deepSleep(settings.sleepTime*1000000, WAKE_RF_DEFAULT); //tried WAKE_RF_DISABLED but can't wake it back up
     } 
   }
 
@@ -247,6 +261,9 @@ void connectToWiFi()
     Serial.print("Attempting to connect to WPA SSID \"");
     Serial.print(settings.ssid);
     Serial.println("\"");
+
+//    WiFi.forceSleepWake(); //turn on the radio
+//    delay(1);              //return control to let it come on
     
     WiFi.mode(WIFI_STA); //station mode, we are only a client in the wifi world
     WiFi.begin(settings.ssid, settings.wifiPassword);
@@ -680,13 +697,19 @@ void checkForCommand()
 int readBattery()
   {
   int raw=ESP.getVcc(); //This commandeers the ADC port
+  if (settings.debug)
+    {
+    Serial.print("Raw voltage count:");
+    Serial.println(raw);
+    }
   return raw;
   }
 
 float convertToVoltage(int raw)
   {
   int vcc=map(raw,0,FULL_BATTERY,0,330);
-  return ((float)vcc)/100.0;
+  float f=((float)vcc)/100.0;
+  return f;
   }
 
 
