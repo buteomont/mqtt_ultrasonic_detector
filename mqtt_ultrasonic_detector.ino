@@ -9,7 +9,7 @@
  *  broker=<broker name or address>
  *  port=<port number>   (defaults to 1883)
  *  topicroot=<topic root> (something like buteomont/water/pressure/ - must end with / and 
- *  "present", "distance" or "voltage" will be added)
+ *  "present", "distance", "analog", or "voltage" will be added)
  *  user=<mqtt user>
  *  pass=<mqtt password>
  *  ssid=<wifi ssid>
@@ -18,7 +18,7 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.11.26.1"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.11.30.1"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>
@@ -134,7 +134,7 @@ void setup()
     distance=measure(); 
     isPresent=distance>settings.minimumPresenceDistance 
                 && distance<settings.maximumPresenceDistance;
-
+    int analog=readBattery();
     
     Serial.print("**************\nThis measured distance: ");
     Serial.print(distance);
@@ -142,9 +142,12 @@ void setup()
 
     Serial.print("Package is ");
     Serial.println(isPresent?"present":"absent");
+    
+    Serial.print("Analog input is ");
+    Serial.println(analog);
 
     Serial.print("Battery voltage: ");
-    Serial.println(convertToVoltage(readBattery()));
+    Serial.println(convertToVoltage(analog));
 
     sendOrNot(); //decide whether or not to send a report
     }
@@ -707,7 +710,7 @@ int readBattery()
 
 float convertToVoltage(int raw)
   {
-  int vcc=map(raw,0,FULL_BATTERY,0,330);
+  int vcc=map(raw,0,FULL_BATTERY,0,340);
   float f=((float)vcc)/100.0;
   return f;
   }
@@ -721,11 +724,20 @@ void report()
   char topic[MQTT_TOPIC_SIZE];
   char reading[18];
   boolean success=false;
+  int analog=readBattery();
+  
+  //publish the raw battery reading
+  strcpy(topic,settings.mqttTopicRoot);
+  strcat(topic,MQTT_TOPIC_ANALOG);
+  sprintf(reading,"%d",analog); 
+  success=publish(topic,reading,true); //retain
+  if (!success)
+    Serial.println("************ Failed publishing raw battery reading!");
 
   //publish the battery voltage
   strcpy(topic,settings.mqttTopicRoot);
   strcat(topic,MQTT_TOPIC_BATTERY);
-  sprintf(reading,"%.2f",convertToVoltage(readBattery())); 
+  sprintf(reading,"%.2f",convertToVoltage(analog)); 
   success=publish(topic,reading,true); //retain
   if (!success)
     Serial.println("************ Failed publishing battery voltage!");

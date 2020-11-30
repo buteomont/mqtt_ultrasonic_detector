@@ -17,6 +17,7 @@
 #define MQTT_TOPIC_DISTANCE "distance"
 #define MQTT_TOPIC_STATE "present"
 #define MQTT_TOPIC_BATTERY "battery"
+#define MQTT_TOPIC_ANALOG "analog"
 #define MQTT_CLIENT_ID_ROOT "UltrasonicDetector"
 #define MQTT_TOPIC_COMMAND_REQUEST "command"
 #define MQTT_PAYLOAD_SETTINGS_COMMAND "settings" //show all user accessable settings
@@ -27,7 +28,7 @@
 #define JSON_STATUS_SIZE SSID_SIZE+PASSWORD_SIZE+USERNAME_SIZE+MQTT_TOPIC_SIZE+50 //+50 for associated field names, etc
 #define PUBLISH_DELAY 400 //milliseconds to wait after publishing to MQTT to allow transaction to finish
 //#define MAX_CHANGE_PCT 2 //percent distance change must be greater than this before reporting
-#define FULL_BATTERY 3230 //raw A0 count when plugged into 5V USB
+#define FULL_BATTERY 2788 //raw A0 count with two lithium batteries 
 #define ONE_HOUR 3600000 //milliseconds
 
 // Error codes copied from the MQTT library
