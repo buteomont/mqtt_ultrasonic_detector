@@ -18,7 +18,7 @@
  *  maxdistance=<maximum presence distance>
  *  sleepTime=<seconds to sleep between measurements> (set to zero for continuous readings)
  */
-#define VERSION "20.11.30.1"  //remember to update this after every change! YY.MM.DD.REV
+#define VERSION "20.112.01.1"  //remember to update this after every change! YY.MM.DD.REV
  
 #include <PubSubClient.h> 
 #include <ESP8266WiFi.h>
@@ -77,6 +77,7 @@ typedef struct
   bool wasPresent=false;      //Package present on last check
   bool presentReported=false; //MQTT Package Present report was sent
   bool absentReported=false;  //MQTT Package Removed report was sent
+  long rssi=-99;               //The signal strength
   } MY_RTC;
   
 MY_RTC myRtc;
@@ -139,6 +140,9 @@ void setup()
     Serial.print("**************\nThis measured distance: ");
     Serial.print(distance);
     Serial.println(" cm ");
+
+    Serial.print("Last RSSI was ");
+    Serial.println(myRtc.rssi);
 
     Serial.print("Package is ");
     Serial.println(isPresent?"present":"absent");
@@ -280,6 +284,8 @@ void connectToWiFi()
   
     Serial.println("Connected to network.");
     Serial.println();
+
+    myRtc.rssi=WiFi.RSSI(); //save the RSSI for later report
     }
   }
 
@@ -725,6 +731,14 @@ void report()
   char reading[18];
   boolean success=false;
   int analog=readBattery();
+  
+  //publish the radio strength reading
+  strcpy(topic,settings.mqttTopicRoot);
+  strcat(topic,MQTT_TOPIC_RSSI);
+  sprintf(reading,"%d",myRtc.rssi); 
+  success=publish(topic,reading,true); //retain
+  if (!success)
+    Serial.println("************ Failed publishing rssi!");
   
   //publish the raw battery reading
   strcpy(topic,settings.mqttTopicRoot);

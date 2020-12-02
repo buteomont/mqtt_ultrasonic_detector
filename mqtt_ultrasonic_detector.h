@@ -18,6 +18,7 @@
 #define MQTT_TOPIC_STATE "present"
 #define MQTT_TOPIC_BATTERY "battery"
 #define MQTT_TOPIC_ANALOG "analog"
+#define MQTT_TOPIC_RSSI "rssi"
 #define MQTT_CLIENT_ID_ROOT "UltrasonicDetector"
 #define MQTT_TOPIC_COMMAND_REQUEST "command"
 #define MQTT_PAYLOAD_SETTINGS_COMMAND "settings" //show all user accessable settings
